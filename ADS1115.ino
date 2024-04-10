@@ -1,18 +1,24 @@
 #include "ADS1115.h"
 #include "string.h"
 
-ADS1115 adc0(ADS1115_DEFAULT_ADDRESS);
+#define MAX_ARGUMENTS 6 //We should not need more than 6 arguments (for commands over Serial)
 
 // Button (used to request voltage) pin
-const int buttonPin = 12;
+#define buttonPin 12
 
-// Adjust the size as needed
-// Used to store data received via Serial port
-char receivedData[64];
+///// MOTOR
+#define stepPin 7
+#define dirPin 5
 
-#define MAX_ARGUMENTS 6 //We should not need more than 6 arguments
+#define motorSpeed 500 //Lower - faster. Indicates the duration of break between pulses in micro-seconds
 
+///// VOLTMETER SETUP
+ADS1115 adc0(ADS1115_DEFAULT_ADDRESS);
+
+///// RUNTIME VARIABLES
 int buttonState = 0;
+
+char receivedData[64]; // Used to store data received via Serial port. Adjust the size as needed
 
 void setup() {    
   Wire.begin();
@@ -31,6 +37,10 @@ void setup() {
 
   // Initialize the button pin as an input:
   pinMode(buttonPin, INPUT);
+
+  // Initialize the motor pins as outputs:
+  pinMode(stepPin,OUTPUT); 
+  pinMode(dirPin,OUTPUT);
 }
 
 // Function to check if a string represents a valid integer
@@ -69,27 +79,58 @@ int convertToInt(char* str) {
   }
 }
 
-void readVoltage(int index) {
+void readVoltage(int index, int readCount = 1) {
+  float voltageSum = 0;
   if(index == 1){
     // Sensor is on P0/N1 (pins 4/5)
     adc0.setMultiplexer(ADS1115_MUX_P0_N1);
-
-    Serial.println("Success: 1");
-    Serial.print("Data: ");
-    Serial.println(adc0.getMilliVolts());
+    adc0.setGain(ADS1115_PGA_6P144);
   } else if(index == 2){
     // 2nd sensor is on P2/N3 (pins 6/7)
-    adc0.setMultiplexer(ADS1115_MUX_P2_N3); 
-
-    Serial.println("Success: 1");
-    Serial.print("Data: ");
-    Serial.println(adc0.getMilliVolts());
+    adc0.setMultiplexer(ADS1115_MUX_P2_N3);
+    adc0.setGain(ADS1115_PGA_0P256); // +/- 0.256 V
   } else {
     Serial.println("Success: 0");
     Serial.print("Data: Invalid index - ");
     Serial.println(index);
+    return;
   }
+
+
+  for(int i = 0; i < readCount; i++){
+    voltageSum += adc0.getMilliVolts();
+    delay(10);
+  }
+
+
+  float voltage = voltageSum / readCount;
+
+
+  Serial.println("Success: 1");
+  Serial.print("Data: ");
+  Serial.println(voltage);
 }
+
+
+void spinMotor(int pulses) {
+  bool dirPinOutput = HIGH;
+  if(pulses < 0){
+    dirPinOutput = LOW;
+    pulses = abs(pulses);
+  }
+
+  digitalWrite(dirPin, dirPinOutput);
+
+  for(int x = 0; x < pulses; x++) {
+    digitalWrite(stepPin,HIGH); 
+    delayMicroseconds(motorSpeed);  // by changing this time delay between the steps we can change the rotation speed
+    digitalWrite(stepPin,LOW); 
+    delayMicroseconds(motorSpeed); 
+  }
+
+  delay(100);
+}
+
 
 void readSerialCommand(){    
   // Index to keep track of the number of received bytes:
@@ -150,14 +191,21 @@ void handleVoltageCommand(char** arguments){
   //Select proper voltage sub-command
   if(strcmp(arguments[1], "get") == 0) {
     int index = convertToInt(arguments[2]);
-    readVoltage(index);
+    readVoltage(index, 50);
   } else {
     handleUnknownCommand();
   }
 }
 
 void handleMotorCommand(char** arguments){
-  //TODO: Handle motor rotations
+  //Select proper motor sub-command
+  if(strcmp(arguments[1], "move") == 0) {
+    int pulses = convertToInt(arguments[2]);
+    spinMotor(pulses);
+  } else {
+    handleUnknownCommand();
+  }
+
   Serial.println("Success: 1");
   Serial.println("Data: None");
 }
